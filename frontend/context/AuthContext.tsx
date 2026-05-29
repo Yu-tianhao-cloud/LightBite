@@ -29,9 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
+      api.setToken(token);
       api.get("/auth/me")
         .then((userData) => setUser(userData))
-        .catch(() => localStorage.removeItem("token"))
+        .catch(() => api.setToken(null))
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
@@ -40,18 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const res = await api.post("/auth/login", { email, password });
-    localStorage.setItem("token", res.access_token);
+    api.setToken(res.access_token);
     setUser(res.user);
   };
 
   const register = async (data: any) => {
     const res = await api.post("/auth/register", data);
-    localStorage.setItem("token", res.access_token);
+    api.setToken(res.access_token);
     setUser(res.user);
   };
 
   const logout = () => {
-    localStorage.removeItem("token");
+    api.setToken(null);
     setUser(null);
     router.push("/");
   };
