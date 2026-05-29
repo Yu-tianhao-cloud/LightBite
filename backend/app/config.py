@@ -3,7 +3,7 @@ import os
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "mysql+pymysql://root:password@localhost:3306/recipe_app"
+    "mysql+pymysql://root:yth123@localhost:3306/recipe_app"
 )
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
 ALGORITHM = "HS256"
