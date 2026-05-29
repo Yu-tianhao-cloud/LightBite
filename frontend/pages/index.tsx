@@ -1,7 +1,7 @@
-export default function Home() {
-  return (
-    <main className="min-h-screen">
-      <h1 className="text-3xl font-bold text-primary">LightBite</h1>
-    </main>
-  );
+// frontend/pages/index.tsx
+import Layout from "@/components/layout/Layout";
+import RecipeGrid from "@/components/recipe/RecipeGrid";
+
+export default function HomePage() {
+  return <Layout><RecipeGrid /></Layout>;
 }
