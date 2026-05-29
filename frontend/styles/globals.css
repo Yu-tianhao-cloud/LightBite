@@ -1,33 +1,33 @@
+/* frontend/styles/globals.css */
 @import "tailwindcss";
-@config "../tailwind.config.ts";
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --color-primary: #4a7c59;
   --color-primary-light: #e8f5e0;
   --color-primary-dark: #3d6b4f;
   --color-accent: #e94560;
   --color-accent-light: #fef0f0;
   --color-warm: #f39c12;
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@config "../tailwind.config.ts";
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #333;
+    -webkit-font-smoothing: antialiased;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #c8e6c0 transparent;
+  }
+}
+
+/* Smooth transitions for interactive elements */
+a, button {
+  transition: background-color 0.2s, border-color 0.2s, opacity 0.2s, transform 0.2s;
 }
