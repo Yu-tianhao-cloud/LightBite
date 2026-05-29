@@ -19,3 +19,7 @@ app.include_router(logs.router)
 app.include_router(plans.router)
 app.include_router(shopping.router)
 app.include_router(goals.router)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
