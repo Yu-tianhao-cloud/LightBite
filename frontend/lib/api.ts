@@ -15,6 +15,8 @@ class ApiClient {
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
+    console.log(`[API] ${options.method || "GET"} ${path} token=${token ? token.slice(0, 10) + "..." : "MISSING"}`);
+
     const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
     if (res.status === 401 && typeof window !== "undefined") {
       localStorage.removeItem("token");

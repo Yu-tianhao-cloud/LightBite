@@ -23,6 +23,7 @@ export default function DashboardPage() {
   const [goals, setGoals] = useState<any>(null);
 
   useEffect(() => {
+    if (!user) return;  // Wait until user is loaded
     const today = new Date().toISOString().split("T")[0];
     const { from, to } = getWeekRange();
     Promise.all([
@@ -39,7 +40,7 @@ export default function DashboardPage() {
       setWeekData(weekLog);
       setGoals(goalsData);
     }).catch(() => {});
-  }, []);
+  }, [user]);
 
   const weekChartData = Object.entries(weekData).map(([date, data]: [string, any]) => ({
     date: date.slice(5),
