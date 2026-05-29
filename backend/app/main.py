@@ -1,7 +1,7 @@
 # backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, recipes, logs
+from app.routers import auth, recipes, logs, plans, shopping, goals
 
 app = FastAPI(title="LightBite API", version="1.0.0")
 
@@ -16,3 +16,6 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(recipes.router)
 app.include_router(logs.router)
+app.include_router(plans.router)
+app.include_router(shopping.router)
+app.include_router(goals.router)
