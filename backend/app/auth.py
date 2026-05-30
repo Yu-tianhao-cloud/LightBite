@@ -35,11 +35,14 @@ def get_current_user(
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        sub = payload.get("sub")
+        if sub is None:
+            raise HTTPException(status_code=401, detail="Invalid token: missing sub")
+        user_id = int(sub)
+    except JWTError as e:
+        print(f"[AUTH DEBUG] JWT decode failed: {e}")
+        print(f"[AUTH DEBUG] Token (first 50 chars): {token[:50]}...")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
