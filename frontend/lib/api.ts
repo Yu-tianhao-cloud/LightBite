@@ -34,10 +34,13 @@ class ApiClient {
     const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
     if (res.status === 401 && typeof window !== "undefined") {
       this.setToken(null);
-      if (path !== "/auth/me") {
+      // Don't hard-redirect for login — let the form display the error
+      if (path !== "/auth/me" && path !== "/auth/login") {
         window.location.href = "/login";
       }
-      return null;
+      // Throw so callers can handle the error (e.g. show message to user)
+      const body = await res.json().catch(() => ({ detail: "认证失败" }));
+      throw new Error(body.detail || "认证失败");
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "Request failed" }));

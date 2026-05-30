@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
+    // api.post now throws on 401 — error propagates to LoginForm
     const res = await api.post("/auth/login", { email, password });
     api.setToken(res.access_token);
     setUser(res.user);

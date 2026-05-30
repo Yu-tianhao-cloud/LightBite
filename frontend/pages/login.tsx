@@ -1,7 +1,20 @@
 // frontend/pages/login.tsx
-import Layout from "@/components/layout/Layout";
+import { useEffect } from "react";
+import { useRouter } from "next/router";
+import { useAuth } from "@/context/AuthContext";
 import LoginForm from "@/components/auth/LoginForm";
 
 export default function LoginPage() {
-  return <Layout><LoginForm /></Layout>;
+  const { user, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.push("/dashboard");
+    }
+  }, [user, loading, router]);
+
+  if (loading || user) return null;
+
+  return <LoginForm />;
 }

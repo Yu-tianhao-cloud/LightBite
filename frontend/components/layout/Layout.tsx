@@ -4,7 +4,7 @@ import { useRouter } from "next/router";
 import Header from "./Header";
 import { useAuth } from "@/context/AuthContext";
 
-const PROTECTED = ["/dashboard", "/log", "/plan", "/shopping"];
+const PROTECTED = ["/", "/dashboard", "/log", "/plan", "/shopping"];
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
