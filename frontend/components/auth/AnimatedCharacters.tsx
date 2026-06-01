@@ -29,10 +29,10 @@ interface CharacterConfig {
 const CHARACTER_BOTTOM = "20%";
 
 const CHARACTERS: CharacterConfig[] = [
-  { id: "sprout", color: "#4a7c59", colorLight: "#7db892", bodyClass: "tall",  left: "12%", eyeTop: 28, delay: 0   },
+  { id: "sprout", color: "#4a7c59", colorLight: "#7db892", bodyClass: "tall",  left: "20%", eyeTop: 28, delay: 0   },
   { id: "tomato", color: "#e94560", colorLight: "#f27b8e", bodyClass: "round", left: "30%", eyeTop: 18, delay: 0.3 },
-  { id: "carrot", color: "#f39c12", colorLight: "#f7b84c", bodyClass: "slim",  left: "58%", eyeTop: 26, delay: 0.6 },
-  { id: "egg",    color: "#8B7355", colorLight: "#c4a97d", bodyClass: "short", left: "71%", eyeTop: 15, delay: 0.9 },
+  { id: "carrot", color: "#f39c12", colorLight: "#f7b84c", bodyClass: "slim",  left: "52%", eyeTop: 26, delay: 0.6 },
+  { id: "egg",    color: "#8B7355", colorLight: "#c4a97d", bodyClass: "short", left: "58%", eyeTop: 15, delay: 0.9 },
 ];
 
 // ================================================================
@@ -195,9 +195,9 @@ function Character({
   const pupilH = config.bodyClass === "slim" ? "10px" : "11px";
 
   const bodyStyles: Record<string, React.CSSProperties> = {
-    tall:  { width: "100px",  height: "280px", borderRadius: "50px", background: `linear-gradient(180deg, ${config.colorLight} 0%, ${config.color} 100%)` },
-    round: { width: "160px", height: "160px", borderRadius: "50%", background: `radial-gradient(circle at 40% 35%, ${config.colorLight} 0%, ${config.color} 100%)` },
-    slim:  { width: "80px",  height: "220px", borderRadius: "40px", background: `linear-gradient(180deg, ${config.colorLight} 0%, ${config.color} 100%)` },
+    tall:  { width: "150px",  height: "360px", borderRadius: "75px", background: `linear-gradient(180deg, ${config.colorLight} 0%, ${config.color} 100%)` },
+    round: { width: "190px", height: "190px", borderRadius: "50%", background: `radial-gradient(circle at 40% 35%, ${config.colorLight} 0%, ${config.color} 100%)` },
+    slim:  { width: "120px",  height: "250px", borderRadius: "60px", background: `linear-gradient(180deg, ${config.colorLight} 0%, ${config.color} 100%)` },
     short: { width: "168px",  height: "100px",  borderRadius: "64px", background: `radial-gradient(ellipse at 50% 30%, ${config.colorLight} 0%, ${config.color} 100%)` },
   };
 
