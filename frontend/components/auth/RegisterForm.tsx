@@ -283,26 +283,6 @@ export default function RegisterForm() {
               </div>
             </div>
 
-            {/* ---- Nutrition macros ---- */}
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                ["热量 kcal", "daily_calories"],
-                ["蛋白 g", "daily_protein_grams"],
-                ["碳水 g", "daily_carbs_grams"],
-                ["脂肪 g", "daily_fat_grams"],
-              ].map(([label, key]) => (
-                <div key={key}>
-                  <label className="block text-xs text-gray-500 mb-1">{label}</label>
-                  <input
-                    type="number"
-                    required
-                    value={(form as any)[key]}
-                    onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })}
-                    className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                  />
-                </div>
-              ))}
-            </div>
 
             {/* ---- Submit ---- */}
             <button

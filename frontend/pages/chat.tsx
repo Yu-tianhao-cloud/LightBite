@@ -132,7 +132,7 @@ export default function ChatPage() {
   useEffect(() => {
     api.get("/chat/conversations")
       .then((data) => {
-        const items: ConvListItem[] = data.items || [];
+        const items: ConvListItem[] = Array.isArray(data) ? data : (data.items || []);
         setConvList(items);
         if (items.length > 0) {
           setActiveId(items[0].id);
@@ -152,16 +152,19 @@ export default function ChatPage() {
 
     api.get(`/chat/conversations/${activeId}`)
       .then((data) => {
+        // Backend returns array of messages directly
+        const messages: Message[] = Array.isArray(data) ? data : (data.messages || []);
+        const meta = convList.find((c) => c.id === activeId);
         const conv: Conversation = {
-          id: data.id,
-          title: data.title,
-          messages: data.messages || [],
-          updatedAt: data.updated_at,
+          id: activeId,
+          title: meta?.title || "对话",
+          messages,
+          updatedAt: meta?.updated_at || new Date().toISOString(),
         };
         setConversations((prev) => [...prev, conv]);
       })
       .catch(() => { /* ignore */ });
-  }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeId, convList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Derived ---
   const activeConv = conversations.find((c) => c.id === activeId) || null;
@@ -234,12 +237,10 @@ export default function ChatPage() {
       setConvList((prev) => prev.map((c) => (c.id === activeId ? { ...c, updated_at: new Date().toISOString() } : c)));
     }
 
-    // Add an empty AI placeholder that we fill as chunks arrive
     s.targetId = activeId || s.tempId!;
-    const placeholderMsg: Message = { role: "assistant", content: "" };
-    updateConv(s.targetId, (c) => ({ ...c, messages: [...c.messages, placeholderMsg] }));
 
     setLoading(true);
+    // AI bubble is added lazily when first chunk arrives — no empty placeholder
 
     // ---- SSE stream ----
     const controller = new AbortController();
@@ -295,7 +296,11 @@ export default function ChatPage() {
                   const msgs = [...c.messages];
                   const last = msgs[msgs.length - 1];
                   if (last && last.role === "assistant") {
+                    // Update existing AI bubble
                     msgs[msgs.length - 1] = { ...last, content: s.content };
+                  } else {
+                    // First chunk — create the AI bubble
+                    msgs.push({ role: "assistant", content: s.content });
                   }
                   return { ...c, messages: msgs };
                 });
@@ -379,7 +384,8 @@ export default function ChatPage() {
     } catch {
       // Revert on failure — reload the list
       const data = await api.get("/chat/conversations").catch(() => null);
-      if (data?.items) setConvList(data.items);
+      const list = Array.isArray(data) ? data : (data?.items || []);
+      if (list.length > 0) setConvList(list);
     }
   };
 
@@ -557,8 +563,8 @@ export default function ChatPage() {
                   </div>
                 ))}
 
-                {/* Loading */}
-                {loading && activeId && (
+                {/* Loading — only show if no AI bubble is streaming yet */}
+                {loading && activeId && activeConv && activeConv.messages[activeConv.messages.length - 1]?.role !== "assistant" && (
                   <div className="flex gap-3 justify-start">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-primary flex items-center justify-center text-white text-sm shrink-0">
                       🤖

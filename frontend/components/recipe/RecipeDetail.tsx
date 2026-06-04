@@ -117,7 +117,7 @@ export default function RecipeDetailView({ recipe }: RecipeDetailProps) {
               </button>
               <button
                 className="w-full border border-primary text-primary rounded-xl py-2.5 font-semibold hover:bg-primary-light transition-colors text-sm">
-                📅 加入周计划
+                📅 加入饮食计划
               </button>
               <button
                 className="w-full border border-gray-200 text-gray-600 rounded-xl py-2.5 font-semibold hover:bg-gray-50 transition-colors text-sm">

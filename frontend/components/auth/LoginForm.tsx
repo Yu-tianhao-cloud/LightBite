@@ -26,6 +26,7 @@ export default function LoginForm() {
   const { user, login } = useAuth();
   const router = useRouter();
   const justLoggedIn = useRef(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   // Redirect already-logged-in users (no toast needed)
   useEffect(() => {
@@ -61,7 +62,10 @@ export default function LoginForm() {
     setFieldErrors({});
     setToast(null);
 
-    if (!validate()) return;
+    if (!validate()) {
+      setToast({ type: "error", message: "请填写完整的登录信息" });
+      return;
+    }
 
     setLoading(true);
     try {
@@ -131,6 +135,12 @@ export default function LoginForm() {
                     value={email}
                     onFocus={() => setEmailFocused(true)}
                     onBlur={() => setEmailFocused(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        passwordRef.current?.focus();
+                      }
+                    }}
                     onChange={(e) => {
                       setEmail(e.target.value);
                       if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: undefined }));
@@ -157,6 +167,7 @@ export default function LoginForm() {
                 </label>
                 <div className="relative">
                   <input
+                    ref={passwordRef}
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => {

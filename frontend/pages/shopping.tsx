@@ -84,7 +84,7 @@ export default function ShoppingPage() {
 
         {items.length === 0 && (
           <div className="text-center py-12 text-gray-400">
-            购物清单为空。<br/>去"周计划"页面生成购物清单！
+            购物清单为空。<br/>去"饮食计划"页面生成购物清单！
           </div>
         )}
       </div>

@@ -20,7 +20,7 @@ export default function Header() {
     { href: "/", label: "🏠 发现食谱" },
     { href: "/dashboard", label: "📊 饮食看板" },
     { href: "/log", label: "📝 饮食记录" },
-    { href: "/plan", label: "📅 周计划" },
+    { href: "/plan", label: "📅 饮食计划" },
     { href: "/shopping", label: "🛒 购物清单" },
     { href: "/chat", label: "🤖 AI助手" },
   ];
