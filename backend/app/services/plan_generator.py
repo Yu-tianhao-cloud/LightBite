@@ -51,6 +51,7 @@ def generate_week_plan(db: Session, user_id: int, week_start: date, goal_type: s
             plan = WeeklyPlan(
                 user_id=user_id, plan_date=d, meal_type=meal,
                 recipe_id=chosen.id, servings=1.0,
+                meal_count=3, cheat_meal=False,
             )
             db.add(plan)
             plan_data[d.isoformat()].append({

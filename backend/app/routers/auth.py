@@ -24,6 +24,9 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         daily_protein_grams=req.daily_protein_grams,
         daily_carbs_grams=req.daily_carbs_grams,
         daily_fat_grams=req.daily_fat_grams,
+        gender=req.gender,
+        height_cm=req.height_cm,
+        weight_kg=req.weight_kg,
     )
     db.add(user)
     db.commit()
@@ -72,4 +75,7 @@ def get_me(current_user: User = Depends(get_current_user)):
         daily_protein_grams=float(current_user.daily_protein_grams) if current_user.daily_protein_grams else None,
         daily_carbs_grams=float(current_user.daily_carbs_grams) if current_user.daily_carbs_grams else None,
         daily_fat_grams=float(current_user.daily_fat_grams) if current_user.daily_fat_grams else None,
+        gender=current_user.gender,
+        height_cm=float(current_user.height_cm) if current_user.height_cm else None,
+        weight_kg=float(current_user.weight_kg) if current_user.weight_kg else None,
     )

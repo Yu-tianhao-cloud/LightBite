@@ -22,4 +22,7 @@ class User(Base):
     daily_protein_grams = Column(DECIMAL(7, 2))
     daily_carbs_grams = Column(DECIMAL(7, 2))
     daily_fat_grams = Column(DECIMAL(7, 2))
+    gender = Column(String(10), nullable=True)
+    height_cm = Column(DECIMAL(5, 1), nullable=True)
+    weight_kg = Column(DECIMAL(5, 1), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
