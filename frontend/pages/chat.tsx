@@ -1,6 +1,9 @@
 // frontend/pages/chat.tsx
 import { useState, useEffect, useRef, useCallback, type FormEvent, type KeyboardEvent } from "react";
 import Layout from "@/components/layout/Layout";
+import { api } from "@/lib/api";
+
+const STREAM_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1") + "/chat/send/stream";
 
 /* ================================================================
    Types
@@ -12,21 +15,25 @@ interface Message {
 }
 
 interface Conversation {
-  id: string;
+  id: number;
   title: string;
   messages: Message[];
-  createdAt: number; // timestamp
+  updatedAt: string; // ISO string from backend
+}
+
+interface ConvListItem {
+  id: number;
+  title: string;
+  updated_at: string;
+  message_count: number;
 }
 
 /* ================================================================
    Helpers
    ================================================================ */
 
-function genId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-function formatTime(ts: number): string {
+function formatTime(iso: string): string {
+  const ts = new Date(iso).getTime();
   const diff = Date.now() - ts;
   if (diff < 60_000) return "刚刚";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`;
@@ -37,25 +44,6 @@ function formatTime(ts: number): string {
 function truncateTitle(text: string, max = 20): string {
   const cleaned = text.replace(/\n/g, " ").trim();
   return cleaned.length > max ? cleaned.slice(0, max) + "…" : cleaned;
-}
-
-const STORAGE_KEY = "lightbite_chat_conversations";
-
-function loadConversations(): Conversation[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveConversations(convs: Conversation[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(convs));
-  } catch { /* quota exceeded — silently ignore */ }
 }
 
 /* ================================================================
@@ -114,7 +102,7 @@ function Markdown({ text }: { text: string }) {
 }
 
 /* ================================================================
-   Suggestions (empty state)
+   Suggestions
    ================================================================ */
 
 const SUGGESTIONS = [
@@ -124,63 +112,60 @@ const SUGGESTIONS = [
   { emoji: "📅", text: "帮我制定一周的饮食计划" },
 ];
 
-function timestamp(): number { return Date.now(); }
-
-function createWelcomeConv(): Conversation {
-  return {
-    id: genId(),
-    title: "新对话",
-    messages: [
-      {
-        role: "assistant" as const,
-        content:
-          "你好！我是 **LightBite AI 助手** 🥗\n\n我可以帮你：\n- 📋 根据你的口味和营养目标推荐食谱\n- 📊 分析你的饮食数据，给出改进建议\n- 🍳 回答烹饪和营养相关问题\n- 📝 帮你制定个性化的饮食计划\n\n⚠️ 当前为前端演示模式，AI 接口尚未接入。",
-      },
-    ],
-    createdAt: timestamp(),
-  };
-}
-
-function getInitialState(): { conversations: Conversation[]; activeId: string | null } {
-  const saved = loadConversations();
-  if (saved.length > 0) {
-    return { conversations: saved, activeId: saved[0].id };
-  }
-  const welcome = createWelcomeConv();
-  return { conversations: [welcome], activeId: welcome.id };
-}
-
-function simulateReply(userText: string): string {
-  return (
-    "👋 感谢你的提问！\n\n" +
-    "`LightBite AI` 模块正在开发中，当前展示的是前端演示界面。\n\n" +
-    "你可以尝试的功能包括：\n- **智能食谱推荐**：输入口味偏好和营养需求\n- **饮食分析**：上传饮食记录获取专业建议\n- **烹饪问答**：任何关于食材、做法的问题\n\n" +
-    "```python\n# 后端 API 示例（开发中）\nPOST /api/v1/chat\n{\n  \"message\": \"" +
-    truncateTitle(userText, 30) +
-    "\",\n  \"history\": [...]\n}\n```\n\n敬请期待！✨"
-  );
-}
-
 /* ================================================================
    Chat Page
    ================================================================ */
 
 export default function ChatPage() {
-  const [conversations, setConversations] = useState<Conversation[]>(() => getInitialState().conversations);
-  const [activeId, setActiveId] = useState<string | null>(() => getInitialState().activeId);
+  const [convList, setConvList] = useState<ConvListItem[]>([]);       // sidebar metadata
+  const [conversations, setConversations] = useState<Conversation[]>([]); // loaded messages
+  const [activeId, setActiveId] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const tempIdCounter = useRef(0);
 
-  // --- Persist ---
+  // --- Load conversation list on mount ---
   useEffect(() => {
-    if (conversations.length > 0) saveConversations(conversations);
-  }, [conversations]);
+    api.get("/chat/conversations")
+      .then((data) => {
+        const items: ConvListItem[] = data.items || [];
+        setConvList(items);
+        if (items.length > 0) {
+          setActiveId(items[0].id);
+        }
+      })
+      .catch(() => { /* backend may not be ready yet */ })
+      .finally(() => setListLoading(false));
+  }, []);
+
+  // --- Load messages when switching conversations ---
+  useEffect(() => {
+    if (activeId === null) return;
+
+    // Already loaded?
+    const existing = conversations.find((c) => c.id === activeId);
+    if (existing) return;
+
+    api.get(`/chat/conversations/${activeId}`)
+      .then((data) => {
+        const conv: Conversation = {
+          id: data.id,
+          title: data.title,
+          messages: data.messages || [],
+          updatedAt: data.updated_at,
+        };
+        setConversations((prev) => [...prev, conv]);
+      })
+      .catch(() => { /* ignore */ });
+  }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Derived ---
   const activeConv = conversations.find((c) => c.id === activeId) || null;
+  const activeMeta = convList.find((c) => c.id === activeId) || null;
 
   // --- Auto-scroll ---
   useEffect(() => {
@@ -196,56 +181,168 @@ export default function ChatPage() {
   }, [input]);
 
   // --- Update conversation helper ---
-  const updateConv = useCallback((id: string, fn: (c: Conversation) => Conversation) => {
-    setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
-  }, []);
+  const updateConv = useCallback((id: number, fn: (c: Conversation) => Conversation) => {
+    setConversations((prev) => {
+      const exists = prev.find((c) => c.id === id);
+      if (exists) {
+        return prev.map((c) => (c.id === id ? fn(c) : c));
+      }
+      // If not loaded yet, create from convList metadata
+      const meta = convList.find((c) => c.id === id);
+      if (meta) {
+        const newConv: Conversation = { id: meta.id, title: meta.title, messages: [], updatedAt: meta.updated_at };
+        return [...prev, fn(newConv)];
+      }
+      return prev;
+    });
+  }, [convList]);
 
-  // --- Send message ---
-  const sendMessage = (overrideText?: string) => {
+  // --- Refs for stream-internal mutable state ---
+  const abortRef = useRef<AbortController | null>(null);
+  const streamRef = useRef({ content: "", realConvId: null as number | null, streamTitle: null as string | null, targetId: 0, tempId: null as number | null });
+
+  // --- Send message (SSE streaming) ---
+  const sendMessage = useCallback(async (overrideText?: string) => {
     const trimmed = (overrideText ?? input).trim();
     if (!trimmed || loading) return;
     if (!overrideText) setInput("");
 
-    let targetId = activeId;
-
-    // If no active conversation, create one
-    if (!targetId) {
-      const newConv: Conversation = {
-        id: genId(),
-        title: truncateTitle(trimmed),
-        messages: [],
-        createdAt: timestamp(),
-      };
-      setConversations((prev) => [newConv, ...prev]);
-      targetId = newConv.id;
-      setActiveId(targetId);
-    }
+    // Cancel any in-flight stream
+    if (abortRef.current) abortRef.current.abort();
 
     const userMsg: Message = { role: "user", content: trimmed };
-    setInput("");
+    const s = streamRef.current;
+    s.content = "";
+    s.realConvId = null;
+    s.streamTitle = null;
 
-    // Update conversation title if it's the first user message
-    updateConv(targetId, (c) => {
-      const hasUserMsg = c.messages.some((m) => m.role === "user");
-      return {
+    // New conversation → create temp local conversation so the message is visible immediately
+    s.tempId = null;
+    if (!activeId) {
+      s.tempId = --tempIdCounter.current;
+      setConversations((prev) => [
+        { id: s.tempId!, title: truncateTitle(trimmed), messages: [userMsg], updatedAt: new Date().toISOString() },
+        ...prev,
+      ]);
+      setActiveId(s.tempId);
+    } else {
+      updateConv(activeId, (c) => ({
         ...c,
-        title: hasUserMsg ? c.title : truncateTitle(trimmed),
+        title: c.messages.some((m) => m.role === "user") ? c.title : truncateTitle(trimmed),
         messages: [...c.messages, userMsg],
-      };
-    });
+      }));
+      setConvList((prev) => prev.map((c) => (c.id === activeId ? { ...c, updated_at: new Date().toISOString() } : c)));
+    }
+
+    // Add an empty AI placeholder that we fill as chunks arrive
+    s.targetId = activeId || s.tempId!;
+    const placeholderMsg: Message = { role: "assistant", content: "" };
+    updateConv(s.targetId, (c) => ({ ...c, messages: [...c.messages, placeholderMsg] }));
 
     setLoading(true);
 
-    // TODO: replace with real API call
-    setTimeout(() => {
-      const aiReply: Message = { role: "assistant", content: simulateReply(trimmed) };
-      updateConv(targetId!, (c) => ({
-        ...c,
-        messages: [...c.messages, aiReply],
-      }));
+    // ---- SSE stream ----
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const res = await fetch(STREAM_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          conversation_id: activeId && activeId > 0 ? activeId : null,
+          message: trimmed,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "请求失败" }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const jsonStr = line.slice(6).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const data = JSON.parse(jsonStr);
+            switch (data.type) {
+              case "meta":
+                s.realConvId = data.conversation_id;
+                s.streamTitle = data.title || null;
+                break;
+              case "chunk":
+                s.content += data.content;
+                updateConv(s.targetId, (c) => {
+                  const msgs = [...c.messages];
+                  const last = msgs[msgs.length - 1];
+                  if (last && last.role === "assistant") {
+                    msgs[msgs.length - 1] = { ...last, content: s.content };
+                  }
+                  return { ...c, messages: msgs };
+                });
+                break;
+              case "done":
+                break;
+            }
+          } catch { /* skip malformed JSON */ }
+        }
+      }
+    } catch (err: unknown) {
+      const e = err as Error;
+      if (e.name === "AbortError") {
+        setLoading(false);
+        return;
+      }
+      s.content = "😅 抱歉，消息发送失败了：" + (e.message || "未知错误") + "\n\n请检查后端服务是否启动。";
+      updateConv(s.targetId, (c) => {
+        const msgs = [...c.messages];
+        msgs[msgs.length - 1] = { role: "assistant", content: s.content };
+        return { ...c, messages: msgs };
+      });
+    } finally {
       setLoading(false);
-    }, 1200);
-  };
+      abortRef.current = null;
+    }
+
+    // ---- Post-stream: reconcile temp conversation → real ----
+    if (s.tempId && s.realConvId) {
+      const finalTitle = s.streamTitle || truncateTitle(trimmed);
+      const finalAiMsg: Message = { role: "assistant", content: s.content };
+
+      setConversations((prev) => [
+        { id: s.realConvId!, title: finalTitle, messages: [userMsg, finalAiMsg], updatedAt: new Date().toISOString() },
+        ...prev.filter((c) => c.id !== s.tempId),
+      ]);
+      setConvList((prev) => [
+        { id: s.realConvId!, title: finalTitle, updated_at: new Date().toISOString(), message_count: 2 },
+        ...prev,
+      ]);
+      setActiveId(s.realConvId);
+    } else if (s.realConvId) {
+      if (s.streamTitle) {
+        setConvList((prev) => prev.map((c) => (c.id === s.realConvId ? { ...c, title: s.streamTitle! } : c)));
+      }
+    }
+  }, [activeId, input, loading, updateConv]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -261,23 +358,32 @@ export default function ChatPage() {
 
   // --- Conversation actions ---
   const newConversation = () => {
-    const conv = createWelcomeConv();
-    setConversations((prev) => [conv, ...prev]);
-    setActiveId(conv.id);
+    setActiveId(null);
     setSidebarOpen(false);
   };
 
-  const deleteConversation = (id: string) => {
-    setConversations((prev) => {
-      const next = prev.filter((c) => c.id !== id);
-      if (id === activeId) {
-        setActiveId(next.length > 0 ? next[0].id : null);
-      }
-      return next;
-    });
+  const deleteConversation = async (id: number) => {
+    // Optimistic removal
+    setConvList((prev) => prev.filter((c) => c.id !== id));
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (id === activeId) {
+      setConvList((prev) => {
+        const nextId = prev.length > 0 ? prev[0].id : null;
+        setActiveId(nextId);
+        return prev;
+      });
+    }
+
+    try {
+      await api.delete(`/chat/conversations/${id}`);
+    } catch {
+      // Revert on failure — reload the list
+      const data = await api.get("/chat/conversations").catch(() => null);
+      if (data?.items) setConvList(data.items);
+    }
   };
 
-  const switchConversation = (id: string) => {
+  const switchConversation = (id: number) => {
     setActiveId(id);
     setSidebarOpen(false);
   };
@@ -322,10 +428,13 @@ export default function ChatPage() {
 
           {/* Conversation list */}
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
-            {conversations.length === 0 && (
+            {listLoading && (
+              <p className="text-center text-gray-400 text-xs py-8">加载中...</p>
+            )}
+            {!listLoading && convList.length === 0 && (
               <p className="text-center text-gray-400 text-xs py-8">暂无对话记录</p>
             )}
-            {conversations.map((conv) => (
+            {convList.map((conv) => (
               <div
                 key={conv.id}
                 onClick={() => switchConversation(conv.id)}
@@ -335,20 +444,17 @@ export default function ChatPage() {
                     : "hover:bg-gray-50 text-gray-600"
                 }`}
               >
-                {/* Icon */}
                 <span className="text-base shrink-0">
                   {conv.id === activeId ? "💬" : "📝"}
                 </span>
 
-                {/* Text */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm truncate">{conv.title}</p>
                   <p className="text-[11px] text-gray-400 mt-0.5">
-                    {conv.messages.filter((m) => m.role === "user").length} 条对话 · {formatTime(conv.createdAt)}
+                    {conv.message_count} 条对话 · {formatTime(conv.updated_at)}
                   </p>
                 </div>
 
-                {/* Delete button */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -369,7 +475,7 @@ export default function ChatPage() {
           {/* Sidebar footer */}
           <div className="border-t border-gray-100 p-4">
             <p className="text-[11px] text-gray-400 text-center">
-              💡 对话记录保存在本地浏览器
+              💡 对话记录保存在云端
             </p>
           </div>
         </aside>
@@ -390,24 +496,33 @@ export default function ChatPage() {
               </svg>
             </button>
             <span className="text-sm font-semibold text-gray-700 truncate">
-              {activeConv ? activeConv.title : "AI 助手"}
+              {activeConv ? activeConv.title : activeMeta ? activeMeta.title : "AI 助手"}
             </span>
           </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto">
-            {!activeConv ? (
-              /* Empty state — no conversations */
+            {!activeId ? (
+              /* Empty state — no conversations or creating new */
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <div className="text-6xl mb-4">🤖</div>
                 <h2 className="text-lg font-bold text-gray-700 mb-2">LightBite AI 助手</h2>
-                <p className="text-sm text-gray-500 mb-6">点击左侧「新对话」开始聊天</p>
-                <button
-                  onClick={newConversation}
-                  className="bg-primary text-white rounded-xl px-6 py-2.5 text-sm font-semibold hover:bg-primary-dark transition-colors"
-                >
-                  ✨ 开始新对话
-                </button>
+                <p className="text-sm text-gray-500 mb-6">
+                  {convList.length === 0 ? "发送消息开始你的第一段对话" : "点击左侧对话或开始新对话"}
+                </p>
+                {convList.length > 0 && (
+                  <button
+                    onClick={newConversation}
+                    className="bg-primary text-white rounded-xl px-6 py-2.5 text-sm font-semibold hover:bg-primary-dark transition-colors"
+                  >
+                    ✨ 开始新对话
+                  </button>
+                )}
+              </div>
+            ) : !activeConv ? (
+              /* Loading messages */
+              <div className="flex items-center justify-center h-full">
+                <p className="text-gray-400 text-sm">加载消息中...</p>
               </div>
             ) : (
               <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
@@ -443,7 +558,7 @@ export default function ChatPage() {
                 ))}
 
                 {/* Loading */}
-                {loading && activeConv.id === activeId && (
+                {loading && activeId && (
                   <div className="flex gap-3 justify-start">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-primary flex items-center justify-center text-white text-sm shrink-0">
                       🤖
@@ -463,52 +578,55 @@ export default function ChatPage() {
             )}
           </div>
 
-          {/* Suggestions bar */}
-          {activeConv &&
-            activeConv.messages.length === 1 &&
-            activeConv.messages[0].role === "assistant" && (
-              <div className="max-w-3xl mx-auto w-full px-4 pb-4">
-                <div className="grid grid-cols-2 gap-2">
-                  {SUGGESTIONS.map((s, i) => (
-                    <button
-                      key={i}
-                      onClick={() => sendMessage(s.text)}
-                      className="text-left bg-white rounded-xl border border-green-100 px-4 py-3 text-sm text-gray-600 hover:bg-green-50 hover:border-green-200 transition-all flex items-center gap-2"
-                    >
-                      <span className="text-lg shrink-0">{s.emoji}</span>
-                      <span>{s.text}</span>
-                    </button>
-                  ))}
-                </div>
+          {/* Suggestions bar — only for new conversation with no messages yet */}
+          {!activeId && (
+            <div className="max-w-3xl mx-auto w-full px-4 pb-4">
+              <div className="grid grid-cols-2 gap-2">
+                {SUGGESTIONS.map((s, i) => (
+                  <button
+                    key={i}
+                    onClick={() => sendMessage(s.text)}
+                    className="text-left bg-white rounded-xl border border-green-100 px-4 py-3 text-sm text-gray-600 hover:bg-green-50 hover:border-green-200 transition-all flex items-center gap-2"
+                  >
+                    <span className="text-lg shrink-0">{s.emoji}</span>
+                    <span>{s.text}</span>
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
           {/* Input area */}
-          {activeConv && (
-            <div className="border-t border-gray-100 bg-white">
-              <form onSubmit={handleSubmit} className="max-w-3xl mx-auto px-4 py-3 flex items-end gap-3">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="输入消息，Enter 发送，Shift+Enter 换行..."
-                  rows={1}
-                  className="flex-1 resize-none border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all"
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || loading}
-                  className="bg-primary text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-primary-dark transition-all disabled:opacity-40 active:scale-95 shrink-0"
-                >
+          <div className="border-t border-gray-100 bg-white">
+            <form onSubmit={handleSubmit} className="max-w-3xl mx-auto px-4 py-3 flex items-end gap-3">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="输入消息，Enter 发送，Shift+Enter 换行..."
+                rows={1}
+                className="flex-1 resize-none border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all"
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || loading}
+                className="bg-primary text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-primary-dark transition-all disabled:opacity-40 active:scale-95 shrink-0"
+              >
+                {loading ? (
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13" />
                     <polygon points="22 2 15 22 11 13 2 9 22 2" />
                   </svg>
-                </button>
-              </form>
-            </div>
-          )}
+                )}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </Layout>
