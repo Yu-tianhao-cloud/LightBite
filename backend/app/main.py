@@ -1,7 +1,7 @@
 # backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, recipes, logs, plans, shopping, goals
+from app.routers import auth, recipes, logs, plans, shopping, goals, chat
 
 app = FastAPI(title="LightBite API", version="1.0.0")
 
@@ -19,6 +19,7 @@ app.include_router(logs.router)
 app.include_router(plans.router)
 app.include_router(shopping.router)
 app.include_router(goals.router)
+app.include_router(chat.router)
 
 if __name__ == "__main__":
     import uvicorn

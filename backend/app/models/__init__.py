@@ -6,6 +6,8 @@ from app.models.daily_log import DailyLog
 from app.models.weekly_plan import WeeklyPlan
 from app.models.shopping import ShoppingItem
 from app.models.weight_log import WeightLog
+from app.models.conversation import Conversation, ChatMessage
 
 __all__ = ["Base", "User", "Recipe", "RecipeStep", "RecipeIngredient",
-           "DailyLog", "WeeklyPlan", "ShoppingItem", "WeightLog"]
+           "DailyLog", "WeeklyPlan", "ShoppingItem", "WeightLog",
+           "Conversation", "ChatMessage"]

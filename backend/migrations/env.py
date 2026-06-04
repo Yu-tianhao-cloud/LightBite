@@ -10,7 +10,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.database import Base
-from app.models import User, Recipe, RecipeStep, RecipeIngredient, DailyLog, WeeklyPlan, ShoppingItem, WeightLog
+from app.models import User, Recipe, RecipeStep, RecipeIngredient, DailyLog, WeeklyPlan, ShoppingItem, WeightLog, Conversation, ChatMessage
 from app.config import DATABASE_URL
 
 # this is the Alembic Config object
