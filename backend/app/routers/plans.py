@@ -130,21 +130,6 @@ def add_recipe_to_plan(
     if not recipe:
         raise HTTPException(status_code=404, detail="食谱不存在")
 
-    existing = (
-        db.query(WeeklyPlan)
-        .filter(
-            WeeklyPlan.user_id == user.id,
-            WeeklyPlan.plan_date == req.date,
-            WeeklyPlan.meal_type == req.meal_type,
-        )
-        .first()
-    )
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{req.date} 的 {req.meal_type} 已有食谱",
-        )
-
     plan = WeeklyPlan(
         user_id=user.id,
         plan_date=req.date,
