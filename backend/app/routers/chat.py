@@ -211,14 +211,18 @@ def send_message_stream(
 
     # 4. 流式生成器
     def generate():
-        client = _get_client()
-        stream = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, *history],
-            temperature=0.7,
-            max_tokens=2000,
-            stream=True,
-        )
+        try:
+            client = _get_client()
+            stream = client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}, *history],
+                temperature=0.7,
+                max_tokens=2000,
+                stream=True,
+            )
+        except Exception as e:
+            yield _sse_event({"type": "error", "message": f"AI 服务连接失败: {str(e)}"})
+            return
 
         # 发送 meta 事件
         meta: dict = {"type": "meta", "conversation_id": conv_id}
@@ -228,11 +232,19 @@ def send_message_stream(
 
         # 流式发送 chunk
         full_reply = ""
-        for chunk in stream:
-            content = chunk.choices[0].delta.content
-            if content:
-                full_reply += content
-                yield _sse_event({"type": "chunk", "content": content})
+        try:
+            for chunk in stream:
+                content = chunk.choices[0].delta.content
+                if content:
+                    full_reply += content
+                    yield _sse_event({"type": "chunk", "content": content})
+        except Exception as e:
+            yield _sse_event({"type": "error", "message": f"流式响应中断: {str(e)}"})
+            # fall through to save whatever we got so far
+
+        # 如果 API 没有返回任何内容，记录错误
+        if not full_reply:
+            full_reply = "😅 AI 没有返回任何内容，请检查模型配置或稍后重试。"
 
         # 保存 AI 回复
         save_db = next(get_db())

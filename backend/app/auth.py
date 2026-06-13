@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session
 from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.database import get_db
 from app.models.user import User
+from app.utils.logging_config import get_logger
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
+logger = get_logger(__name__)
 
 
 def hash_password(password: str) -> str:
@@ -40,8 +42,8 @@ def get_current_user(
             raise HTTPException(status_code=401, detail="Invalid token: missing sub")
         user_id = int(sub)
     except JWTError as e:
-        print(f"[AUTH DEBUG] JWT decode failed: {e}")
-        print(f"[AUTH DEBUG] Token (first 50 chars): {token[:50]}...")
+        logger.warning("JWT decode failed: %s", e)
+        logger.debug("Token prefix: %s...", token[:50])
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
     user = db.query(User).filter(User.id == user_id).first()

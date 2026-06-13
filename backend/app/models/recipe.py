@@ -19,7 +19,9 @@ class Recipe(Base):
     total_carbs_grams = Column(DECIMAL(7, 2))
     total_fat_grams = Column(DECIMAL(7, 2))
     total_fiber_grams = Column(DECIMAL(7, 2))
+    total_grams = Column(DECIMAL(8, 2))
     tags = Column(JSON)
+    category = Column(String(20), nullable=False, default="recipe")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     steps = relationship("RecipeStep", back_populates="recipe", cascade="all, delete-orphan")

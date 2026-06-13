@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/v1/recipes", tags=["recipes"])
 def list_recipes(
     search: str = Query(None, description="搜索菜名或食材名"),
     tag: str = Query(None, description="按标签筛选"),
+    category: str = Query(None, description="按分类筛选: recipe, ingredient"),
     sort: str = Query("newest", description="排序: newest, calories_asc, calories_desc, protein_desc"),
     page: int = Query(1, ge=1),
     size: int = Query(12, ge=1, le=50),
@@ -39,6 +40,9 @@ def list_recipes(
     if tag:
         query = query.filter(Recipe.tags.contains(tag))
 
+    if category:
+        query = query.filter(Recipe.category == category)
+
     if sort == "calories_asc":
         query = query.order_by(Recipe.total_calories.asc())
     elif sort == "calories_desc":
@@ -64,7 +68,9 @@ def list_recipes(
                 total_protein_grams=float(r.total_protein_grams) if r.total_protein_grams else None,
                 total_carbs_grams=float(r.total_carbs_grams) if r.total_carbs_grams else None,
                 total_fat_grams=float(r.total_fat_grams) if r.total_fat_grams else None,
+                total_grams=float(r.total_grams) if r.total_grams else None,
                 tags=r.tags,
+                category=r.category,
             )
             for r in recipes
         ],
@@ -98,7 +104,9 @@ def get_recipe(recipe_id: int, db: Session = Depends(get_db)):
         total_carbs_grams=float(recipe.total_carbs_grams) if recipe.total_carbs_grams else None,
         total_fat_grams=float(recipe.total_fat_grams) if recipe.total_fat_grams else None,
         total_fiber_grams=float(recipe.total_fiber_grams) if recipe.total_fiber_grams else None,
+        total_grams=float(recipe.total_grams) if recipe.total_grams else None,
         tags=recipe.tags,
+        category=recipe.category,
         steps=[
             StepOut(
                 id=s.id,

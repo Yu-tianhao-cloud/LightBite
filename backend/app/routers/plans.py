@@ -1,5 +1,5 @@
 # backend/app/routers/plans.py
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Body, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from datetime import date, timedelta
 from app.database import get_db
@@ -12,11 +12,61 @@ from app.schemas.weekly_plan import (
     WeekPlanResponse, PlanSlot, SavePlanRequest,
     BodyData, PlanTarget, DayPlan,
     SavePlanSlot, UpdateDayPlanRequest, CompensationResponse,
+    GeneratePlanRequest,
 )
-from app.services.plan_generator import generate_week_plan
+from app.services.plan_generator import generate_ai_week_plan, generate_week_plan
+import traceback
+from app.utils.logging_config import get_logger
 from app.services.shopping_service import plan_to_shopping_list
 
+logger = get_logger(__name__)
+
+
+def _scale_grams(recipe: Recipe, servings: float) -> float | None:
+    """Scale recipe grams by servings. Handles both ingredient and recipe types."""
+    if recipe.total_grams is None:
+        return None
+    if recipe.category == "ingredient":
+        # For ingredients, total_grams (=default_servings) IS the gram weight of 1 serving
+        return round(float(recipe.total_grams) * servings, 1)
+    else:
+        # For recipes, total_grams is the sum of all ingredients; divide by default_servings
+        default_srv = recipe.default_servings or 1
+        return round(float(recipe.total_grams) * servings / default_srv, 1)
+
 router = APIRouter(prefix="/api/v1/plans", tags=["plans"])
+
+
+def _plan_to_slot(p, recipe: Recipe | None) -> PlanSlot:
+    """Build a PlanSlot response from a WeeklyPlan row."""
+    srv = float(p.servings or 1)
+    grams = float(p.grams) if p.grams else None
+    if recipe:
+        return PlanSlot(
+            id=p.id,
+            meal_type=p.meal_type,
+            recipe_id=p.recipe_id,
+            recipe_name=recipe.name,
+            servings=srv,
+            grams=grams,
+            calories=float(recipe.total_calories) * srv if recipe.total_calories else None,
+            protein=float(recipe.total_protein_grams) * srv if recipe.total_protein_grams else None,
+            carbs=float(recipe.total_carbs_grams) * srv if recipe.total_carbs_grams else None,
+            fat=float(recipe.total_fat_grams) * srv if recipe.total_fat_grams else None,
+        )
+    else:
+        return PlanSlot(
+            id=p.id,
+            meal_type=p.meal_type,
+            recipe_id=None,
+            recipe_name=p.recipe_name_override,
+            servings=srv,
+            grams=grams,
+            calories=float(p.calories_override) if p.calories_override else None,
+            protein=float(p.protein_override) if p.protein_override else None,
+            carbs=float(p.carbs_override) if p.carbs_override else None,
+            fat=float(p.fat_override) if p.fat_override else None,
+        )
 
 
 def _get_week_days(week_start: date) -> list[date]:
@@ -24,12 +74,13 @@ def _get_week_days(week_start: date) -> list[date]:
     return [monday + timedelta(days=i) for i in range(7)]
 
 
-@router.get("", response_model=WeekPlanResponse)
-def get_plan(
-    week_start: date = Query(...),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def _build_plan_response(
+    db: Session,
+    user: User,
+    week_start: date,
+    generation_source: str | None = None,
+    ai_summary: str | None = None,
+) -> WeekPlanResponse:
     days = _get_week_days(week_start)
     plans = (
         db.query(WeeklyPlan)
@@ -44,20 +95,13 @@ def get_plan(
 
     for p in plans:
         date_key = p.plan_date.isoformat()
-        recipe = db.query(Recipe).filter(Recipe.id == p.recipe_id).first()
+        recipe = db.query(Recipe).filter(Recipe.id == p.recipe_id).first() if p.recipe_id else None
 
         if not days_result[date_key].meals:
             days_result[date_key].meal_count = p.meal_count
             days_result[date_key].cheat_meal = p.cheat_meal
 
-        days_result[date_key].meals.append(PlanSlot(
-            id=p.id,
-            meal_type=p.meal_type,
-            recipe_id=p.recipe_id,
-            recipe_name=recipe.name if recipe else None,
-            servings=float(p.servings),
-            calories=float(recipe.total_calories) if recipe and recipe.total_calories else None,
-        ))
+        days_result[date_key].meals.append(_plan_to_slot(p, recipe))
 
     return WeekPlanResponse(
         week_start=week_start,
@@ -74,7 +118,18 @@ def get_plan(
             daily_fat_grams=float(user.daily_fat_grams) if user.daily_fat_grams else None,
         ),
         days=days_result,
+        generation_source=generation_source,
+        ai_summary=ai_summary,
     )
+
+
+@router.get("", response_model=WeekPlanResponse)
+def get_plan(
+    week_start: date = Query(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _build_plan_response(db, user, week_start)
 
 
 @router.get("/compensation", response_model=CompensationResponse)
@@ -126,16 +181,28 @@ def add_recipe_to_plan(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    recipe = db.query(Recipe).filter(Recipe.id == req.recipe_id).first()
-    if not recipe:
-        raise HTTPException(status_code=404, detail="食谱不存在")
+    recipe = None
+    grams = req.grams
+    if req.recipe_id:
+        recipe = db.query(Recipe).filter(Recipe.id == req.recipe_id).first()
+        if not recipe:
+            raise HTTPException(status_code=404, detail="食谱不存在")
+        # Compute grams from recipe.total_grams if not explicitly provided
+        if grams is None:
+            grams = _scale_grams(recipe, req.servings)
 
     plan = WeeklyPlan(
         user_id=user.id,
         plan_date=req.date,
         meal_type=req.meal_type,
-        recipe_id=req.recipe_id,
-        servings=1.0,
+        recipe_id=req.recipe_id if recipe else None,
+        recipe_name_override=req.recipe_name if not recipe else None,
+        calories_override=req.calories if not recipe else None,
+        protein_override=req.protein if not recipe else None,
+        carbs_override=req.carbs if not recipe else None,
+        fat_override=req.fat if not recipe else None,
+        servings=req.servings,
+        grams=grams,
         meal_count=3,
         cheat_meal=False,
     )
@@ -143,24 +210,40 @@ def add_recipe_to_plan(
     db.commit()
     db.refresh(plan)
 
-    return PlanSlot(
-        id=plan.id,
-        meal_type=plan.meal_type,
-        recipe_id=plan.recipe_id,
-        recipe_name=recipe.name,
-        servings=1.0,
-        calories=float(recipe.total_calories) if recipe.total_calories else None,
-    )
+    return _plan_to_slot(plan, recipe)
 
 
 @router.post("/generate", response_model=WeekPlanResponse)
 def auto_generate(
     week_start: date = Query(...),
+    req: GeneratePlanRequest = Body(default_factory=GeneratePlanRequest),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if req.mode == "ai":
+        try:
+            result = generate_ai_week_plan(db, user, week_start, req.preferences)
+            return _build_plan_response(
+                db,
+                user,
+                week_start,
+                generation_source=result["source"],
+                ai_summary=result["summary"],
+            )
+        except Exception:
+            logger.exception("AI 计划生成失败，使用规则回退")
+            db.rollback()
+            generate_week_plan(db, user.id, week_start, user.goal_type.value, user.daily_calories)
+            return _build_plan_response(
+                db,
+                user,
+                week_start,
+                generation_source="fallback_random",
+                ai_summary="AI 生成暂时不可用，已为你使用规则生成了一份计划。",
+            )
+
     generate_week_plan(db, user.id, week_start, user.goal_type.value, user.daily_calories)
-    return get_plan(week_start=week_start, user=user, db=db)
+    return _build_plan_response(db, user, week_start, generation_source="random")
 
 
 @router.put("", response_model=WeekPlanResponse)
@@ -177,15 +260,27 @@ def save_plan(
 
     for date_str, slots in req.days.items():
         for slot in slots:
+            grams = slot.grams
+            if slot.recipe_id and grams is None:
+                recipe = db.query(Recipe).filter(Recipe.id == slot.recipe_id).first()
+                if recipe:
+                    grams = _scale_grams(recipe, slot.servings)
             plan = WeeklyPlan(
                 user_id=user.id, plan_date=date.fromisoformat(date_str),
-                meal_type=slot.meal_type, recipe_id=slot.recipe_id,
+                meal_type=slot.meal_type,
+                recipe_id=slot.recipe_id if slot.recipe_id else None,
+                recipe_name_override=slot.recipe_name if not slot.recipe_id else None,
+                calories_override=slot.calories if not slot.recipe_id else None,
+                protein_override=slot.protein if not slot.recipe_id else None,
+                carbs_override=slot.carbs if not slot.recipe_id else None,
+                fat_override=slot.fat if not slot.recipe_id else None,
                 servings=slot.servings,
+                grams=grams,
                 meal_count=3, cheat_meal=False,
             )
             db.add(plan)
     db.commit()
-    return get_plan(week_start=req.week_start, user=user, db=db)
+    return _build_plan_response(db, user, req.week_start)
 
 
 @router.put("/{plan_date}", response_model=dict)

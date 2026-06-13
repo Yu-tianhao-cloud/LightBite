@@ -30,7 +30,9 @@ class RecipeListItem(BaseModel):
     total_protein_grams: float | None
     total_carbs_grams: float | None
     total_fat_grams: float | None
+    total_grams: float | None
     tags: list[str] | None
+    category: str = "recipe"
 
 
 class RecipeDetail(BaseModel):
@@ -46,7 +48,9 @@ class RecipeDetail(BaseModel):
     total_carbs_grams: float | None
     total_fat_grams: float | None
     total_fiber_grams: float | None
+    total_grams: float | None
     tags: list[str] | None
+    category: str = "recipe"
     steps: list[StepOut]
     ingredients: list[IngredientOut]
 

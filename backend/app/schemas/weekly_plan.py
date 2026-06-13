@@ -6,10 +6,14 @@ from datetime import date
 class PlanSlot(BaseModel):
     id: int | None = None
     meal_type: str
-    recipe_id: int
+    recipe_id: int | None = None
     recipe_name: str | None = None
     servings: float = 1.0
+    grams: float | None = None
     calories: float | None = None
+    protein: float | None = None
+    carbs: float | None = None
+    fat: float | None = None
 
 
 class BodyData(BaseModel):
@@ -37,6 +41,13 @@ class WeekPlanResponse(BaseModel):
     body_data: BodyData
     target: PlanTarget
     days: dict[str, DayPlan]
+    generation_source: str | None = None
+    ai_summary: str | None = None
+
+
+class GeneratePlanRequest(BaseModel):
+    mode: str = Field("random", pattern="^(random|ai)$")
+    preferences: str | None = Field(None, max_length=500)
 
 
 class SavePlanRequest(BaseModel):
@@ -47,9 +58,14 @@ class SavePlanRequest(BaseModel):
 class SavePlanSlot(BaseModel):
     date: date
     meal_type: str = Field(..., pattern="^(breakfast|lunch|dinner|snack)$")
-    recipe_id: int
-    recipe_name: str | None = None
-    calories: float | None = None
+    recipe_id: int | None = None
+    recipe_name: str
+    calories: float
+    servings: float = 1.0
+    grams: float | None = None
+    protein: float | None = None
+    carbs: float | None = None
+    fat: float | None = None
 
 
 class UpdateDayPlanRequest(BaseModel):
