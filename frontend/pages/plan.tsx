@@ -1,5 +1,6 @@
 // frontend/pages/plan.tsx
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
+import Link from "next/link";
 import Layout from "@/components/layout/Layout";
 import { api } from "@/lib/api";
 
@@ -13,6 +14,11 @@ interface MealSlot {
   recipe_id: number | null;
   recipe_name: string | null;
   calories: number | null;
+  servings?: number | null;
+  grams?: number | null;
+  protein?: number | null;
+  carbs?: number | null;
+  fat?: number | null;
 }
 
 interface DayPlan {
@@ -23,17 +29,24 @@ interface DayPlan {
 }
 
 interface BodyData {
-  gender: string;
-  height: number;
-  weight: number;
-  daily_budget: number;
+  gender: string | null;
+  height_cm: number | null;
+  weight_kg: number | null;
 }
 
 interface PlanData {
   week_start: string;
   body_data: BodyData | null;
-  target: { goal_type: string; daily_calories: number; daily_protein: number; daily_carbs: number; daily_fat: number } | null;
+  target: {
+    goal_type: string;
+    daily_calories: number;
+    daily_protein_grams: number | null;
+    daily_carbs_grams: number | null;
+    daily_fat_grams: number | null;
+  } | null;
   days: Record<string, DayPlan> | null;
+  generation_source?: "random" | "ai" | "fallback_random" | null;
+  ai_summary?: string | null;
 }
 
 interface Compensation {
@@ -87,6 +100,17 @@ function shiftWeek(monday: string, delta: number): string {
   return d.toISOString().split("T")[0];
 }
 
+function formatServings(value?: number | null): string {
+  const servings = value ?? 1;
+  if (Number.isInteger(servings)) return String(servings);
+  return servings.toFixed(2).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+}
+
+function formatCalories(value?: number | null): string {
+  if (value == null) return "0.00";
+  return value.toFixed(2);
+}
+
 /* ================================================================
    Page
    ================================================================ */
@@ -100,6 +124,10 @@ export default function PlanPage() {
   const [plan, setPlan] = useState<PlanData | null>(null);
   const [compensation, setCompensation] = useState<Compensation | null>(null);
   const [loading, setLoading] = useState(true);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState(false);
+  const [aiPreferences, setAiPreferences] = useState("");
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
 
   // Body data form
   const [bodyForm, setBodyForm] = useState({ gender: "male", height_cm: 170, weight_kg: 65 });
@@ -115,12 +143,22 @@ export default function PlanPage() {
   // Add-recipe modal
   const [addingSlot, setAddingSlot] = useState<{ date: string; meal_type: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<{ id: number; name: string; total_calories: number | null; cooking_time_minutes: number | null }[]>([]);
+  const [searchResults, setSearchResults] = useState<{ id: number; name: string; total_calories: number | null; total_grams: number | null; cooking_time_minutes: number | null }[]>([]);
   const [searching, setSearching] = useState(false);
+
+  // Custom food quick-add
+  const [customName, setCustomName] = useState("");
+  const [customCalories, setCustomCalories] = useState("");
+  const [customServings, setCustomServings] = useState("1");
+  const [customGrams, setCustomGrams] = useState("");
+
+  // Recipe servings per result (recipe_id → servings)
+  const [recipeServings, setRecipeServings] = useState<Record<number, number>>({});
 
   // ---- Load / reload plan ----
   const fetchPlan = (ws: string) => {
     setLoading(true);
+    setAiSummary(null);
     Promise.all([
       api.get(`/plans?week_start=${ws}`).catch(() => null),
       api.get(`/plans/compensation?week_start=${ws}`).catch(() => null),
@@ -164,13 +202,23 @@ export default function PlanPage() {
 
   // ---- AI generate ----
   const generatePlan = async () => {
-    if (!confirm("AI 将根据你的身体数据和偏好，重新生成本周饮食计划。确定吗？")) return;
-    setLoading(true);
+    if (aiGenerating) return;
+    setAiGenerating(true);
+    setAiError(false);
+    setAiSummary("正在根据你的身体数据、目标营养和偏好生成本周饮食计划...");
     try {
-      await api.post(`/plans/generate?week_start=${weekStart}`);
-      fetchPlan(weekStart);
+      const generated = await api.post(`/plans/generate?week_start=${weekStart}`, {
+        mode: "ai",
+        preferences: aiPreferences.trim() || null,
+      });
+      setPlan(generated);
+      setAiError(false);
+      setAiSummary(generated.ai_summary || null);
     } catch {
-      // ignore
+      setAiError(true);
+      setAiSummary("生成失败了，请稍后再试。");
+    } finally {
+      setAiGenerating(false);
     }
   };
 
@@ -211,6 +259,10 @@ export default function PlanPage() {
     setAddingSlot({ date, meal_type });
     setSearchQuery("");
     setSearchResults([]);
+    setCustomName("");
+    setCustomCalories("");
+    setCustomServings("1");
+    setCustomGrams("");
   };
 
   const doSearch = async () => {
@@ -226,20 +278,95 @@ export default function PlanPage() {
     }
   };
 
-  const addRecipeToSlot = async (recipe: { id: number; name: string; total_calories: number | null }) => {
+  const tempIdRef = useRef(0);
+  const addRecipeToSlot = async (recipe: { id: number; name: string; total_calories: number | null }, servings = 1) => {
     if (!addingSlot) return;
+    const slot = addingSlot;
+    const tempId = --tempIdRef.current;
+    const calPerServing = recipe.total_calories || 0;
+    const totalCal = Math.round(calPerServing * servings * 100) / 100;
+
+    // Optimistic: add to local state immediately
+    setPlan((prev) => {
+      if (!prev?.days) return prev;
+      const day = prev.days[slot.date];
+      if (!day) return prev;
+      return {
+        ...prev,
+        days: {
+          ...prev.days,
+          [slot.date]: {
+            ...day,
+            meals: [
+              ...(day.meals || []),
+              { id: tempId, meal_type: slot.meal_type, recipe_id: recipe.id, recipe_name: recipe.name, calories: totalCal, servings },
+            ],
+          },
+        },
+      };
+    });
+
+    setAddingSlot(null);
+    setRecipeServings({});
+
+    // Fire async API call
+    try {
+      const res = await api.post("/plans/add-recipe", {
+        date: slot.date, meal_type: slot.meal_type, recipe_id: recipe.id, recipe_name: recipe.name, calories: totalCal, servings,
+      });
+      console.log("添加食谱成功", res);
+      fetchPlan(weekStart);
+    } catch (err) {
+      console.error("添加食谱失败", err);
+    }
+  };
+
+  const addCustomFoodToSlot = async () => {
+    if (!addingSlot || !customName.trim() || !customCalories.trim()) return;
+    const slot = addingSlot;
+    const name = customName.trim();
+    const calPerServing = Number(customCalories);
+    const servings = Number(customServings) || 1;
+    if (isNaN(calPerServing) || calPerServing <= 0) return;
+    const totalCalories = Math.round(calPerServing * servings * 100) / 100;
+    const gramsVal = customGrams.trim() ? Number(customGrams) : undefined;
+    const grams = gramsVal && !isNaN(gramsVal) && gramsVal > 0 ? gramsVal : undefined;
+    const tempId = --tempIdRef.current;
+
+    // Optimistic: add to local state immediately
+    setPlan((prev) => {
+      if (!prev?.days) return prev;
+      const day = prev.days[slot.date];
+      if (!day) return prev;
+      return {
+        ...prev,
+        days: {
+          ...prev.days,
+          [slot.date]: {
+            ...day,
+            meals: [
+              ...(day.meals || []),
+              { id: tempId, meal_type: slot.meal_type, recipe_id: null, recipe_name: name, calories: totalCalories, servings, grams },
+            ],
+          },
+        },
+      };
+    });
+
+    setAddingSlot(null);
+    setCustomName("");
+    setCustomCalories("");
+    setCustomServings("1");
+    setCustomGrams("");
+
+    // Fire async API call
     try {
       await api.post("/plans/add-recipe", {
-        date: addingSlot.date,
-        meal_type: addingSlot.meal_type,
-        recipe_id: recipe.id,
-        recipe_name: recipe.name,
-        calories: recipe.total_calories || 0,
+        date: slot.date, meal_type: slot.meal_type, recipe_id: null, recipe_name: name, calories: totalCalories, servings, grams,
       });
-      setAddingSlot(null);
       fetchPlan(weekStart);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("添加自定义食物失败", err);
     }
   };
 
@@ -294,34 +421,25 @@ export default function PlanPage() {
               className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition-colors">
               下周 ▶
             </button>
-            <button onClick={generatePlan}
-              className="bg-primary text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-primary-dark transition-colors ml-2">
-              ✨ AI智能生成
+            <button onClick={generatePlan} disabled={aiGenerating}
+              className="bg-primary text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-primary-dark transition-all ml-2 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-primary">
+              {aiGenerating ? "✨ 生成中..." : "✨ AI智能生成"}
             </button>
             <button onClick={generateShopping}
               className="border border-primary text-primary px-3 py-1.5 rounded-lg text-sm hover:bg-primary-light transition-colors">
               🛒 购物清单
             </button>
+            <Link href="/roulette"
+              className="border border-amber-300 text-amber-600 px-3 py-1.5 rounded-lg text-sm hover:bg-amber-50 transition-colors">
+              🎲 放纵转盘
+            </Link>
           </div>
         </div>
-
-        {/* ====== Compensation Banner ====== */}
-        {compensation && compensation.excess > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-            <span className="text-xl shrink-0">⚠️</span>
-            <div>
-              <p className="text-sm font-semibold text-amber-800">
-                昨日摄入 {compensation.yesterday_calories} / {compensation.target} kcal，超出 {compensation.excess} kcal
-              </p>
-              <p className="text-sm text-amber-700 mt-0.5">{compensation.suggestion}</p>
-            </div>
-          </div>
-        )}
 
         {/* ====== Content: Sidebar + Cards ====== */}
         <div className="flex gap-6 items-start flex-1 overflow-hidden">
           {/* ====== Left Sidebar: Body + Target ====== */}
-          <div className="w-72 shrink-0 space-y-4">
+          <div className="w-72 shrink-0 space-y-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 56px - 80px)" }}>
             <form onSubmit={saveBodyData}>
               <div className="bg-white rounded-xl border border-green-100 p-4 space-y-4">
                 {/* Body data */}
@@ -399,6 +517,18 @@ export default function PlanPage() {
                   </div>
                 </div>
 
+                <div>
+                  <label className="block text-[11px] text-gray-400 mb-1">AI偏好</label>
+                  <textarea
+                    value={aiPreferences}
+                    onChange={(e) => setAiPreferences(e.target.value)}
+                    maxLength={500}
+                    rows={3}
+                    placeholder="例如：少油、不吃辣、高蛋白、早餐简单一点"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+
                 <button type="submit" disabled={savingBody}
                   className="w-full bg-primary text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary-dark transition-colors disabled:opacity-50">
                   {savingBody ? "保存中..." : "💾 保存"}
@@ -411,7 +541,7 @@ export default function PlanPage() {
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                 <p className="text-xs font-semibold text-amber-800 mb-1">⚠️ 昨日超支</p>
                 <p className="text-xs text-amber-700">
-                  摄入 {compensation.yesterday_calories} / {compensation.target} kcal，超 {compensation.excess} kcal
+                  摄入 {formatCalories(compensation.yesterday_calories)} / {compensation.target} kcal，超 {formatCalories(compensation.excess)} kcal
                 </p>
                 <p className="text-[11px] text-amber-600 mt-1">{compensation.suggestion}</p>
               </div>
@@ -420,6 +550,41 @@ export default function PlanPage() {
 
           {/* ====== Right: Day Cards 2-col ====== */}
           <div className="flex-1 min-w-0 overflow-y-auto" style={{ maxHeight: "calc(100vh - 56px - 80px)" }}>
+            {/* ====== Compensation Banner ====== */}
+            {compensation && compensation.excess > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 flex items-start gap-3">
+                <span className="text-xl shrink-0">⚠️</span>
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">
+                    昨日摄入 {formatCalories(compensation.yesterday_calories)} / {compensation.target} kcal，超出 {formatCalories(compensation.excess)} kcal
+                  </p>
+                  <p className="text-sm text-amber-700 mt-0.5">{compensation.suggestion}</p>
+                </div>
+              </div>
+            )}
+
+            {/* ====== AI Summary ====== */}
+            {(aiSummary || plan?.generation_source === "fallback_random") && (
+              <div className={`rounded-xl border p-3 mb-3 text-sm transition-all ${
+                aiGenerating
+                  ? "bg-primary-light border-green-200 text-primary-dark animate-pulse"
+                  : aiError || plan?.generation_source === "fallback_random"
+                    ? "bg-amber-50 border-amber-200 text-amber-800"
+                    : "bg-green-50 border-green-100 text-green-800"
+              }`}>
+                <p className="font-semibold mb-1">
+                  {aiGenerating
+                    ? "AI 正在生成"
+                    : aiError
+                      ? "生成失败"
+                      : plan?.generation_source === "fallback_random"
+                        ? "已使用规则生成"
+                        : "AI 计划说明"}
+                </p>
+                <p>{aiSummary || "本次没有拿到 AI 说明，但饮食计划已生成。"}</p>
+              </div>
+            )}
+
             {loading ? (
               <div className="text-center py-12 text-gray-400">加载中...</div>
             ) : (
@@ -454,30 +619,51 @@ export default function PlanPage() {
                   </div>
 
                   {/* Meal slots */}
-                  <div className="space-y-2.5 flex-1">
+                  <div className="space-y-2 flex-1">
                     {activeMeals.map((mealType) => {
-                      const slot = dayPlan?.meals?.find((m) => m.meal_type === mealType);
+                      const items = dayPlan?.meals?.filter((m) => m.meal_type === mealType) || [];
+                      const slotCalories = items.reduce((s, m) => s + (m.calories || 0), 0);
                       return (
-                        <div key={mealType} className="flex items-center justify-between min-h-[40px] py-1">
-                          <span className="text-gray-400 w-6 shrink-0 text-sm">{MEAL_LABELS[mealType]}:</span>
-                          {slot?.recipe_id ? (
-                            <div
-                              onClick={() => openAddRecipe(date, mealType)}
-                              className="flex-1 flex items-center justify-between min-w-0 ml-1 cursor-pointer hover:bg-green-50 rounded-lg px-2 py-0.5 transition-colors group/slot"
-                              title="点击更换食谱"
-                            >
-                              <span className="text-gray-700 font-semibold truncate text-sm">{slot.recipe_name}</span>
-                              <span className="text-accent ml-1 shrink-0 text-xs">{slot.calories}kcal</span>
-                              <button onClick={(e) => { e.stopPropagation(); removeRecipeFromSlot(slot.id); }}
-                                className="text-gray-400 hover:text-red-500 ml-1 shrink-0 opacity-0 group-hover/slot:opacity-100 transition-opacity"
-                                title="移除">✕</button>
-                            </div>
-                          ) : (
+                        <div key={mealType}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-gray-400 text-sm font-medium">{MEAL_LABELS[mealType]}餐</span>
+                            {slotCalories > 0 && (
+                              <span className="text-[11px] text-primary font-semibold">{formatCalories(slotCalories)} kcal</span>
+                            )}
+                          </div>
+                          {items.length === 0 ? (
                             <button
                               onClick={() => openAddRecipe(date, mealType)}
-                              className="flex-1 text-left text-gray-300 hover:text-primary hover:bg-green-50 rounded-lg px-2 py-1 transition-colors ml-1 text-xs border border-dashed border-gray-200 hover:border-primary/30">
-                              + 添加食谱
+                              className="w-full text-left text-gray-300 hover:text-primary hover:bg-green-50 rounded-lg px-2 py-1.5 transition-colors text-xs border border-dashed border-gray-200 hover:border-primary/30">
+                              + 添加食物
                             </button>
+                          ) : (
+                            <div className="space-y-1">
+                              {items.map((item) => (
+                                <div
+                                  key={item.id}
+                                  onClick={() => openAddRecipe(date, mealType)}
+                                  className="flex items-center justify-between cursor-pointer hover:bg-green-50 rounded-lg px-2 py-1 transition-colors group/slot"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <span className="text-gray-700 text-sm truncate block">{item.recipe_name}</span>
+                                    <span className="text-[10px] text-gray-400">
+                                      {item.grams != null && <span className="text-primary font-semibold">{item.grams}g</span>}
+                                      {item.grams != null ? " · " : ""}× {formatServings(item.servings)} 份
+                                    </span>
+                                  </div>
+                                  <span className="text-accent text-xs ml-1 shrink-0">{formatCalories(item.calories)} kcal</span>
+                                  <button onClick={(e) => { e.stopPropagation(); removeRecipeFromSlot(item.id); }}
+                                    className="text-gray-400 hover:text-red-500 ml-1 shrink-0 opacity-0 group-hover/slot:opacity-100 transition-opacity"
+                                    title="移除">✕</button>
+                                </div>
+                              ))}
+                              <button
+                                onClick={() => openAddRecipe(date, mealType)}
+                                className="w-full text-left text-gray-300 hover:text-primary hover:bg-green-50 rounded-lg px-2 py-1 transition-colors text-xs border border-dashed border-gray-200 hover:border-primary/30">
+                                + 添加
+                              </button>
+                            </div>
                           )}
                         </div>
                       );
@@ -488,7 +674,7 @@ export default function PlanPage() {
                   <div className="border-t border-gray-100 pt-2 space-y-2 mt-auto">
                     <p className="text-xs text-gray-500 text-right">
                       小计 <span className="font-semibold text-primary">
-                        {(dayPlan?.meals || []).reduce((s, m) => s + (m.calories || 0), 0)} kcal
+                        {formatCalories((dayPlan?.meals || []).reduce((s, m) => s + (m.calories || 0), 0))} kcal
                       </span>
                     </p>
                     <label className="flex items-center gap-1.5 cursor-pointer">
@@ -536,22 +722,106 @@ export default function PlanPage() {
             </div>
 
             <div className="space-y-2 max-h-64 overflow-y-auto">
-              {searchResults.map((recipe) => (
-                <button key={recipe.id}
-                  onClick={() => addRecipeToSlot(recipe)}
-                  className="w-full text-left p-3 rounded-xl border border-gray-100 hover:bg-green-50 hover:border-green-200 transition-all flex justify-between items-center">
-                  <div>
-                    <span className="text-sm font-semibold text-gray-700">{recipe.name}</span>
-                    {recipe.cooking_time_minutes && (
-                      <span className="text-xs text-gray-400 ml-2">⏱ {recipe.cooking_time_minutes}分钟</span>
-                    )}
+              {searchResults.map((recipe) => {
+                const srv = recipeServings[recipe.id] || 1;
+                const calPerServing = recipe.total_calories || 0;
+                const totalCal = Math.round(calPerServing * srv * 100) / 100;
+                return (
+                  <div key={recipe.id}
+                    className="w-full text-left p-3 rounded-xl border border-gray-100 hover:bg-green-50 hover:border-green-200 transition-all flex justify-between items-center cursor-pointer"
+                    onClick={() => addRecipeToSlot(recipe, srv)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-semibold text-gray-700">{recipe.name}</span>
+                      {recipe.total_grams != null && (
+                        <span className="text-xs text-primary/70 ml-1">{recipe.total_grams}g/份</span>
+                      )}
+                      {recipe.cooking_time_minutes && (
+                        <span className="text-xs text-gray-400 ml-2">⏱ {recipe.cooking_time_minutes}分钟</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => setRecipeServings((prev) => ({ ...prev, [recipe.id]: Math.max(0.5, srv - 0.5) }))}
+                        className="w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 text-xs flex items-center justify-center transition-colors"
+                      >−</button>
+                      <span className="text-xs font-semibold text-gray-600 w-6 text-center">{srv}</span>
+                      <button
+                        onClick={() => setRecipeServings((prev) => ({ ...prev, [recipe.id]: srv + 0.5 }))}
+                        className="w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 text-xs flex items-center justify-center transition-colors"
+                      >+</button>
+                      <span className="text-sm text-accent font-semibold w-20 text-right">{formatCalories(totalCal)} kcal</span>
+                    </div>
                   </div>
-                  <span className="text-sm text-accent font-semibold">{recipe.total_calories || "?"} kcal</span>
-                </button>
-              ))}
+                );
+              })}
               {!searching && searchResults.length === 0 && searchQuery && (
                 <p className="text-center text-gray-400 text-sm py-4">没有找到相关食谱</p>
               )}
+            </div>
+
+            {/* Custom food quick-add */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <p className="text-sm font-semibold text-gray-600 mb-3">✏️ 快速添加自定义食物</p>
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="食物名称 *"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="number"
+                      value={customCalories}
+                      onChange={(e) => setCustomCalories(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addCustomFoodToSlot()}
+                      placeholder="每份热量 kcal *"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      min={1}
+                    />
+                  </div>
+                  <div className="w-20">
+                    <input
+                      type="number"
+                      value={customServings}
+                      onChange={(e) => setCustomServings(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addCustomFoodToSlot()}
+                      placeholder="份数"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      min={0.5}
+                      step={0.5}
+                    />
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  value={customGrams}
+                  onChange={(e) => setCustomGrams(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addCustomFoodToSlot()}
+                  placeholder="克重 (g)，选填"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  min={1}
+                />
+                {customCalories && Number(customCalories) > 0 && (
+                  <p className="text-xs text-center text-primary font-semibold">
+                    总计：{formatCalories(Math.round(Number(customCalories) * (Number(customServings) || 1) * 100) / 100)} kcal
+                    {customGrams && Number(customGrams) > 0 && ` · ${Number(customGrams)}g`}
+                  </p>
+                )}
+                <p className="text-[11px] text-gray-400">
+                  💡 参考：🍎苹果≈100 · 🍚米饭≈200 · 🍗鸡胸≈150 · 🥚鸡蛋≈70 kcal
+                </p>
+                <button
+                  onClick={addCustomFoodToSlot}
+                  disabled={!customName.trim() || !customCalories.trim()}
+                  className="w-full bg-primary text-white rounded-lg py-2 text-sm font-semibold hover:bg-primary-dark transition-colors disabled:opacity-50"
+                >
+                  添加自定义食物
+                </button>
+              </div>
             </div>
           </div>
         </div>

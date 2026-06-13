@@ -2,9 +2,10 @@
 import { ReactNode, useEffect } from "react";
 import { useRouter } from "next/router";
 import Header from "./Header";
+import Companion from "@/components/companion/Companion";
 import { useAuth } from "@/context/AuthContext";
 
-const PROTECTED = ["/", "/dashboard", "/log", "/plan", "/shopping"];
+const PROTECTED = ["/", "/dashboard", "/log", "/plan", "/shopping", "/roulette"];
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -14,7 +15,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     if (!loading && !user && PROTECTED.includes(router.pathname)) {
       router.push("/login");
     }
-  }, [user, loading, router.pathname]);
+  }, [user, loading, router]);
 
   if (!loading && !user && PROTECTED.includes(router.pathname)) {
     return null;
@@ -24,6 +25,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-green-50/30">
       <Header />
       <main>{children}</main>
+      <Companion />
     </div>
   );
 }
